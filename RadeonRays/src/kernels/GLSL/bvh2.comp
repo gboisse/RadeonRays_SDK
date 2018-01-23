@@ -25,7 +25,7 @@
 //
 
 #define INVALID_ADDR 0xffffffffu
-#define INTERNAL_NODE(node) ((node).addr_left != INVALID_ADDR)
+#define INTERNAL_NODE(node) (GetAddrLeft(node) != INVALID_ADDR)
 
 #define HIT_MARKER  0x1u
 #define MISS_MARKER 0xffffffffu
@@ -34,16 +34,17 @@
 #define STACK_SIZE 32
 #define LDS_STACK_SIZE 8
 
+#define GetAddrLeft(node)  floatBitsToUint((node).aabb_left_min_or_v0_and_addr_left.w)
+#define GetAddrRight(node) floatBitsToUint((node).aabb_right_min_or_v2_and_addr_right.w)
+#define GetMeshId(node)    floatBitsToUint((node).aabb_left_max_or_v1_and_mesh_id.w)
+#define GetPrimId(node)    floatBitsToUint((node).aabb_right_max_and_prim_id.w)
+
 struct BvhNode
 {
-    vec3 aabb_left_min_or_v0;
-    uint addr_left;
-    vec3 aabb_left_max_or_v1;
-    uint mesh_id;
-    vec3 aabb_right_min_or_v2;
-    uint addr_right;
-    vec3 aabb_right_max;
-    uint prim_id;
+    vec4 aabb_left_min_or_v0_and_addr_left;
+    vec4 aabb_left_max_or_v1_and_mesh_id;
+    vec4 aabb_right_min_or_v2_and_addr_right;
+    vec4 aabb_right_max_and_prim_id;
 };
 
 struct Intersection
@@ -58,8 +59,7 @@ struct ray
 {
     vec4 o;
     vec4 d;
-    ivec2 extra;
-    ivec2 padding;
+    vec4 padding;
 };
 
 layout(std140, binding = 0) buffer restrict readonly NodesBlock
@@ -212,12 +212,12 @@ void intersect_main()
         if (INTERNAL_NODE(node))
         {
             vec2 s0 = fast_intersect_aabb(
-                node.aabb_left_min_or_v0,
-                node.aabb_left_max_or_v1,
+                node.aabb_left_min_or_v0_and_addr_left.xyz,
+                node.aabb_left_max_or_v1_and_mesh_id.xyz,
                 invDir, oxInvDir, closest_t);
             vec2 s1 = fast_intersect_aabb(
-                node.aabb_right_min_or_v2,
-                node.aabb_right_max,
+                node.aabb_right_min_or_v2_and_addr_right.xyz,
+                node.aabb_right_max_and_prim_id.xyz,
                 invDir, oxInvDir, closest_t);
 
             bool traverse_c0 = (s0.x <= s0.y);
@@ -230,13 +230,13 @@ void intersect_main()
 
                 if (c1first || !traverse_c0)
                 {
-                    addr = node.addr_right;
-                    deferred = node.addr_left;
+                    addr = GetAddrRight(node);
+                    deferred = GetAddrLeft(node);
                 }
                 else
                 {
-                    addr = node.addr_left;
-                    deferred = node.addr_right;
+                    addr = GetAddrLeft(node);
+                    deferred = GetAddrRight(node);
                 }
 
                 if (traverse_c0 && traverse_c1)
@@ -262,9 +262,9 @@ void intersect_main()
         {
             float t = fast_intersect_triangle(
                 myRay,
-                node.aabb_left_min_or_v0,
-                node.aabb_left_max_or_v1,
-                node.aabb_right_min_or_v2,
+                node.aabb_left_min_or_v0_and_addr_left.xyz,
+                node.aabb_left_max_or_v1_and_mesh_id.xyz,
+                node.aabb_right_min_or_v2_and_addr_right.xyz,
                 closest_t);
 
             if (t < closest_t)
@@ -305,14 +305,14 @@ void intersect_main()
         // Calculate barycentric coordinates
         isect.uvwt.xy = calculate_barycentrics(
             p,
-            node.aabb_left_min_or_v0,
-            node.aabb_left_max_or_v1,
-            node.aabb_right_min_or_v2
+            node.aabb_left_min_or_v0_and_addr_left.xyz,
+            node.aabb_left_max_or_v1_and_mesh_id.xyz,
+            node.aabb_right_min_or_v2_and_addr_right.xyz
         );
 
         // Update hit information
-        isect.prim_id = node.prim_id;
-        isect.shape_id = node.mesh_id;
+        isect.prim_id = GetPrimId(node);
+        isect.shape_id = GetMeshId(node);
     }
     else
     {
@@ -359,12 +359,12 @@ void occluded_main()
         if (INTERNAL_NODE(node))
         {
             vec2 s0 = fast_intersect_aabb(
-                node.aabb_left_min_or_v0,
-                node.aabb_left_max_or_v1,
+                node.aabb_left_min_or_v0_and_addr_left.xyz,
+                node.aabb_left_max_or_v1_and_mesh_id.xyz,
                 invDir, oxInvDir, closest_t);
             vec2 s1 = fast_intersect_aabb(
-                node.aabb_right_min_or_v2,
-                node.aabb_right_max,
+                node.aabb_right_min_or_v2_and_addr_right.xyz,
+                node.aabb_right_max_and_prim_id.xyz,
                 invDir, oxInvDir, closest_t);
 
             bool traverse_c0 = (s0.x <= s0.y);
@@ -377,13 +377,13 @@ void occluded_main()
 
                 if (c1first || !traverse_c0)
                 {
-                    addr = node.addr_right;
-                    deferred = node.addr_left;
+                    addr = GetAddrRight(node);
+                    deferred = GetAddrLeft(node);
                 }
                 else
                 {
-                    addr = node.addr_left;
-                    deferred = node.addr_right;
+                    addr = GetAddrLeft(node);
+                    deferred = GetAddrRight(node);
                 }
 
                 if (traverse_c0 && traverse_c1)
@@ -409,9 +409,9 @@ void occluded_main()
         {
             float t = fast_intersect_triangle(
                 myRay,
-                node.aabb_left_min_or_v0,
-                node.aabb_left_max_or_v1,
-                node.aabb_right_min_or_v2,
+                node.aabb_left_min_or_v0_and_addr_left.xyz,
+                node.aabb_left_max_or_v1_and_mesh_id.xyz,
+                node.aabb_right_min_or_v2_and_addr_right.xyz,
                 closest_t);
 
             if (t < closest_t)
